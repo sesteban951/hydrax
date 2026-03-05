@@ -22,12 +22,6 @@ parser.add_argument(
     required=False,
 )
 parser.add_argument(
-    "--reference_filename",
-    type=str,
-    default="Lafan1/mocap/UnitreeG1/walk1_subject1.npz",
-    help="Reference mocap file name, from https://huggingface.co/datasets/robfiras/loco-mujoco-datasets/tree/main.",
-)
-parser.add_argument(
     "--show_reference",
     action="store_true",
     help="Show the reference trajectory as a 'ghost' in the simulation.",
@@ -43,7 +37,6 @@ args = parser.parse_args()
 
 # Define the task (cost and dynamics)
 task = HumanoidSRB(
-    reference_filename=args.reference_filename,
     impl="warp" if args.warp else "jax",
 )
 

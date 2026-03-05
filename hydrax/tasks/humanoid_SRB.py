@@ -5,24 +5,18 @@ import jax
 import jax.numpy as jnp
 import mujoco
 import numpy as np
-from huggingface_hub import hf_hub_download
 from mujoco import mjx
-from mujoco.mjx._src.math import quat_sub
 
 from hydrax import ROOT
 from hydrax.task_base import Task
 
 
 class HumanoidSRB(Task):
-    """The Unitree G1 humanoid tracks a reference from motion capture.
-
-    Retargeted motion capture data comes from the LocoMuJoCo dataset:
-    https://huggingface.co/datasets/robfiras/loco-mujoco-datasets/tree/main.
+    """The Unitree G1 humanoid tracks a reference from SRb data.
     """
 
     def __init__(
         self,
-        reference_filename: str = "Lafan1/mocap/UnitreeG1/walk1_subject1.npz",
         impl: str = "jax",
     ) -> None:
         """Load the MuJoCo model and set task parameters.
@@ -45,30 +39,30 @@ class HumanoidSRB(Task):
         # get model properties
         self._get_model_properties(mj_model)
 
-        # get the SRB reference trajectory
-        self._make_reference_trajectory(reference_filename)
+        # make the reference trajectory
+        self._make_reference_trajectory()
 
         # base weights
         w_pos_x = 1.0
         w_pos_z = 20.0
-        w_theta = 5.0
+        w_theta = 0.1
 
-        w_vel_x = 1.0
-        w_vel_z = 5.0
-        w_omega = 1.0
+        w_vel_x = 0.1
+        w_vel_z = 2.0
+        w_omega = 0.01
 
         # joint weights
-        w_pos_hip  = 0.001
-        w_pos_knee = 0.001
-        w_pos_ankle    = 0.001
-        w_pos_shoulder = 0.001
-        w_pos_elbow    = 0.001
+        w_pos_hip  = 0.0
+        w_pos_knee = 0.0
+        w_pos_ankle    = 0.0
+        w_pos_shoulder = 0.01
+        w_pos_elbow    = 0.01
 
-        w_vel_hip   = 0.0001
-        w_vel_knee  = 0.0001
-        w_vel_ankle = 0.0001
-        w_vel_shoulder = 0.0001
-        w_vel_elbow    = 0.0001
+        w_vel_hip   = 0.0
+        w_vel_knee  = 0.0
+        w_vel_ankle = 0.0
+        w_vel_shoulder = 0.001
+        w_vel_elbow    = 0.001
 
         self.q_weights = jnp.array([
             w_pos_x, w_pos_z, w_theta,
@@ -85,13 +79,16 @@ class HumanoidSRB(Task):
             w_vel_shoulder, w_vel_elbow,
         ])
 
-        # input weights
-        self.w_u = 1
+        # other weights
+        self.w_u = 1e-4
+        self.w_pos_foot_x = 1.0
+        self.w_pos_foot_theta = 1.0
 
         # terminal weights
         terminal_scaling = 10.0
         self.qf_weights = terminal_scaling * self.q_weights
         self.vf_weights = terminal_scaling * self.v_weights
+        self.wf_pos_foot_theta = terminal_scaling * self.w_pos_foot_theta
 
         print("Initialized Humanoid SRB tracking task.")
 
@@ -109,6 +106,16 @@ class HumanoidSRB(Task):
         self.qpos_joints_ref = self.qpos_default[3:]
         self.qvel_joints_ref = self.qvel_default[3:]
 
+        # Get sensor IDs
+        left_foot_pos_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, "left_foot_position"        )
+        left_foot_quat_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, "left_foot_orientation")
+        right_foot_pos_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, "right_foot_position")
+        right_foot_quat_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, "right_foot_orientation")
+        self.left_foot_pos_addr = self.mj_model.sensor_adr[left_foot_pos_id]
+        self.left_foot_quat_addr = self.mj_model.sensor_adr[left_foot_quat_id]
+        self.right_foot_pos_addr = self.mj_model.sensor_adr[right_foot_pos_id]
+        self.right_foot_quat_addr = self.mj_model.sensor_adr[right_foot_quat_id]
+
         print(f"Model properties:\n"
               f"    Time step (dt): {self.dt}\n"
               f"    Reference keyframe: '{keyframe}'\n"
@@ -116,7 +123,7 @@ class HumanoidSRB(Task):
               f"    qvel_default: {self.qvel_default}\n")
 
 
-    def _make_reference_trajectory(self, traj_path):
+    def _make_reference_trajectory(self):
 
         # Load trajectory CSV files from a stable package-relative location.
         traj_path = Path(ROOT) / "trajectories" / "srb_jump_2d"
@@ -205,32 +212,64 @@ class HumanoidSRB(Task):
         i = jnp.int32(t * self.reference_fps)
         i = jnp.clip(i, 0, self.qpos_ref.shape[0] - 1)
         return self.qpos_ref[i, :], self.qvel_ref[i, :]
+    
 
     def running_cost(self, state: mjx.Data, control: jax.Array) -> jax.Array:
         """The running cost ℓ(xₜ, uₜ)."""
         q_ref, v_ref = self._get_reference_configuration(state.time)
-        q_err = q_ref - state.qpos
-        v_err = v_ref - state.qvel
+
+        # Use actual CoM (x, z) instead of base frame for position/velocity
+        com_pos, com_vel = self._get_com_state(state)
+        q_actual = jnp.concatenate([com_pos, state.qpos[2:]])
+        v_actual = jnp.concatenate([com_vel, state.qvel[2:]])
+
+        # # base frame version (before CoM)
+        # q_err = q_ref - state.qpos
+        # v_err = v_ref - state.qvel
+
+        # com version 
+        q_err = q_ref - q_actual
+        v_err = v_ref - v_actual
 
         configuration_cost = jnp.sum(self.q_weights * jnp.square(q_err))
         velocity_cost = jnp.sum(self.v_weights * jnp.square(v_err))
         control_cost = self.w_u * jnp.sum(jnp.square(control - q_ref[3:]))
 
-        return configuration_cost + velocity_cost + control_cost
+        # Foot orientation cost: penalize pitch deviation from flat (theta = 0)
+        _, _, left_quat, right_quat = self._get_foot_pose(state)
+        foot_orientation_cost = self.w_pos_foot_theta * (
+            jnp.square(self._foot_pitch(left_quat))
+            + jnp.square(self._foot_pitch(right_quat))
+        )
+
+        return configuration_cost + velocity_cost + control_cost + foot_orientation_cost
+
 
     def terminal_cost(self, state: mjx.Data) -> jax.Array:
         """The terminal cost ϕ(x_T)."""
         q_ref, v_ref = self._get_reference_configuration(state.time)
-        q_err = q_ref - state.qpos
-        v_err = v_ref - state.qvel
+
+        com_pos, com_vel = self._get_com_state(state)
+        q_actual = jnp.concatenate([com_pos, state.qpos[2:]])
+        v_actual = jnp.concatenate([com_vel, state.qvel[2:]])
+
+        # # base frame version (before CoM)
+        # q_err = q_ref - state.qpos
+        # v_err = v_ref - state.qvel
+
+        q_err = q_ref - q_actual
+        v_err = v_ref - v_actual
 
         configuration_cost = jnp.sum(self.qf_weights * jnp.square(q_err))
         velocity_cost = jnp.sum(self.vf_weights * jnp.square(v_err))
 
-        return self.dt * (
-            configuration_cost +
-            velocity_cost
+        _, _, left_quat, right_quat = self._get_foot_pose(state)
+        foot_orientation_cost = self.wf_pos_foot_theta * (
+            jnp.square(self._foot_pitch(left_quat))
+            + jnp.square(self._foot_pitch(right_quat))
         )
+
+        return self.dt * (configuration_cost + velocity_cost + foot_orientation_cost)
 
     # def domain_randomize_model(self, rng: jax.Array) -> Dict[str, jax.Array]:
     #     """Randomize the friction parameters."""
@@ -254,6 +293,40 @@ class HumanoidSRB(Task):
 
     #     return {"qpos": qpos, "qvel": qvel}
 
-    # def make_data(self) -> mjx.Data:
-    #     """Create a new state object with extra constraints allocated."""
-    #     return super().make_data(naconmax=20000, njmax=200)
+    def make_data(self) -> mjx.Data:
+        """Create a new state object with extra constraints allocated."""
+        return super().make_data(naconmax=20000, njmax=200)
+
+    # ===============================================================
+    # UTILS
+    # ===============================================================
+
+    def _get_foot_pose(self, data: mjx.Data):
+        """Get the current foot positions and orientations."""
+        left_pos = data.sensordata[self.left_foot_pos_addr : self.left_foot_pos_addr + 3]
+        right_pos = data.sensordata[self.right_foot_pos_addr : self.right_foot_pos_addr + 3]
+        left_quat = data.sensordata[self.left_foot_quat_addr : self.left_foot_quat_addr + 4]
+        right_quat = data.sensordata[self.right_foot_quat_addr : self.right_foot_quat_addr + 4]
+        return left_pos, right_pos, left_quat, right_quat
+
+    def _foot_pitch(self, quat: jax.Array):
+        """Extract pitch angle from a quaternion [qw, qx, qy, qz].
+
+        For planar rotation about the y-axis: q = [cos(θ/2), 0, sin(θ/2), 0],
+        so θ = 2 * arctan2(qy, qw).
+        """
+        qw = quat[0]
+        qy = quat[2]
+        return 2.0 * jnp.arctan2(qy, qw)
+    
+    def _get_com_state(self, data: mjx.Data):
+        """Extract CoM position (x, z) and linear velocity (vx, vz) of the full robot.
+
+        Uses subtree_com[1] and subtree_linvel[1], where body 1 is the root body
+        so its subtree spans the entire robot.
+        """
+        _com_pos = data.subtree_com[0]
+        _com_vel = data._impl.subtree_linvel[0]
+        com_pos = _com_pos[jnp.array([0, 2])]  # (x, z)
+        com_vel = _com_vel[jnp.array([0, 2])]  # (vx, vz)
+        return com_pos, com_vel
