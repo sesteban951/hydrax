@@ -44,7 +44,7 @@ class HumanoidSRB(Task):
 
         # base weights
         w_pos_x = 1.0
-        w_pos_z = 15.0
+        w_pos_z = 10.0
         w_theta = 0.1
 
         w_vel_x = 0.1
@@ -55,14 +55,14 @@ class HumanoidSRB(Task):
         w_pos_hip      = 0.0
         w_pos_knee     = 0.0
         w_pos_ankle    = 0.0
-        w_pos_shoulder = 0.001
-        w_pos_elbow    = 0.001
+        w_pos_shoulder = 0.01
+        w_pos_elbow    = 0.01
 
         w_vel_hip   = 0.0
         w_vel_knee  = 0.0
         w_vel_ankle = 0.0
-        w_vel_shoulder = 0.0001
-        w_vel_elbow    = 0.0001
+        w_vel_shoulder = 0.001
+        w_vel_elbow    = 0.001
 
         self.q_weights = jnp.array([
             w_pos_x, w_pos_z, w_theta,
