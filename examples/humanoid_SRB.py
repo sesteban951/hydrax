@@ -45,11 +45,11 @@ task = HumanoidSRB(
 ctrl = CEM(
     task,
     num_samples=512,
-    num_elites=20,
+    num_elites=30,
     sigma_start=0.1,
     sigma_min=0.05,
     explore_fraction=0.5,
-    plan_horizon=0.4,
+    plan_horizon=0.5,
     spline_type="cubic",
     num_knots=5,
     iterations=args.iterations,
@@ -98,7 +98,7 @@ if args.show_reference:
 else:
     reference = None
 
-run_interactive(
+sim_data = run_interactive(
     ctrl,
     mj_model,
     mj_data,
@@ -107,4 +107,21 @@ run_interactive(
     reference=reference,
     reference_fps=task.reference_fps,
     initial_knots=initial_knots,
+    max_time=5.0,
 )
+
+# Save recorded data as CSV files
+import numpy as np
+from pathlib import Path
+
+output_dir = Path(__file__).resolve().parent.parent / "results" / "g1"
+output_dir.mkdir(parents=True, exist_ok=True)
+
+np.savetxt(output_dir / "time.csv", sim_data["time"], delimiter=",")
+np.savetxt(output_dir / "qpos.csv", sim_data["qpos"], delimiter=",")
+np.savetxt(output_dir / "qvel.csv", sim_data["qvel"], delimiter=",")
+np.savetxt(output_dir / "actuator_force.csv", sim_data["actuator_force"], delimiter=",")
+
+print(f"Saved simulation data to {output_dir}/"
+      f" ({sim_data['time'].shape[0]} steps,"
+      f" t={sim_data['time'][-1]:.2f}s)")

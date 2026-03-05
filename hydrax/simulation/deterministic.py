@@ -32,6 +32,7 @@ def run_interactive(  # noqa: PLR0912, PLR0915
     reference: np.ndarray = None,
     reference_fps: float = 30.0,
     record_video: bool = False,
+    max_time: float = None,
 ) -> None:
     """Run an interactive simulation with the MPC controller.
 
@@ -138,6 +139,12 @@ def run_interactive(  # noqa: PLR0912, PLR0915
             record_video = False
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
 
+    # Data recording
+    log_time = []
+    log_qpos = []
+    log_qvel = []
+    log_actuator_force = []
+
     # Start the simulation
     with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
         if fixed_camera_id is not None:
@@ -167,7 +174,7 @@ def run_interactive(  # noqa: PLR0912, PLR0915
                 mj_model, ref_data, vopt, pert, catmask, viewer.user_scn
             )
 
-        while viewer.is_running():
+        while viewer.is_running() and (max_time is None or mj_data.time < max_time):
             start_time = time.time()
 
             # Set the start state for the controller
@@ -230,6 +237,13 @@ def run_interactive(  # noqa: PLR0912, PLR0915
             for i in range(sim_steps_per_replan):
                 mj_data.ctrl[:] = np.array(us[i])
                 mujoco.mj_step(mj_model, mj_data)
+
+                # Record data
+                log_time.append(mj_data.time)
+                log_qpos.append(mj_data.qpos.copy())
+                log_qvel.append(mj_data.qvel.copy())
+                log_actuator_force.append(mj_data.actuator_force.copy())
+
                 viewer.sync()
 
                 # Capture frame if recording
@@ -246,7 +260,7 @@ def run_interactive(  # noqa: PLR0912, PLR0915
             # Print some timing information
             rtr = step_dt / (time.time() - start_time)
             print(
-                f"Realtime rate: {rtr:.2f}, plan time: {plan_time:.4f}s",
+                f"Realtime rate: {rtr:.2f}, plan time: {plan_time:.4f}s, sim time: {mj_data.time:.2f}s",
                 end="\r",
             )
 
@@ -256,3 +270,11 @@ def run_interactive(  # noqa: PLR0912, PLR0915
     # Close the video recorder if recording was enabled
     if record_video and recorder is not None:
         recorder.stop()
+
+    # Return recorded simulation data
+    return {
+        "time": np.array(log_time),
+        "qpos": np.array(log_qpos),
+        "qvel": np.array(log_qvel),
+        "actuator_force": np.array(log_actuator_force),
+    }
