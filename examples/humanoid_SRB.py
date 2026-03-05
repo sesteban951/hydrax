@@ -3,7 +3,8 @@ from copy import deepcopy
 
 import mujoco
 
-from hydrax.algs import CEM
+from hydrax.algs import CEM, MPPI, Evosax
+from evosax.algorithms.distribution_based.cma_es import CMA_ES
 from hydrax.simulation.deterministic import run_interactive
 from hydrax.tasks.humanoid_SRB import HumanoidSRB
 
@@ -45,7 +46,7 @@ ctrl = CEM(
     task,
     num_samples=512,
     num_elites=20,
-    sigma_start=0.2,
+    sigma_start=0.1,
     sigma_min=0.05,
     explore_fraction=0.5,
     plan_horizon=0.4,
@@ -53,6 +54,28 @@ ctrl = CEM(
     num_knots=5,
     iterations=args.iterations,
 )
+# ctrl = MPPI(
+#     task,
+#     num_samples=512,
+#     noise_level=0.3,
+#     temperature=0.1,
+#     # num_randomizations=4,
+#     plan_horizon=0.4,
+#     spline_type="cubic",
+#     num_knots=5,
+#     iterations=args.iterations,
+# )
+
+# ctrl = Evosax(
+#     task,
+#     CMA_ES,
+#     num_samples=512,
+#     # num_randomizations=8,
+#     plan_horizon=0.4,
+#     spline_type="cubic",
+#     num_knots=5,
+#     iterations=args.iterations,
+# )
 
 # Define the model used for simulation
 mj_model = deepcopy(task.mj_model)

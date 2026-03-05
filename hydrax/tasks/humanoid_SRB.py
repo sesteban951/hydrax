@@ -44,25 +44,25 @@ class HumanoidSRB(Task):
 
         # base weights
         w_pos_x = 1.0
-        w_pos_z = 20.0
+        w_pos_z = 15.0
         w_theta = 0.1
 
         w_vel_x = 0.1
-        w_vel_z = 2.0
+        w_vel_z = 1.0
         w_omega = 0.01
 
         # joint weights
-        w_pos_hip  = 0.0
-        w_pos_knee = 0.0
+        w_pos_hip      = 0.0
+        w_pos_knee     = 0.0
         w_pos_ankle    = 0.0
-        w_pos_shoulder = 0.01
-        w_pos_elbow    = 0.01
+        w_pos_shoulder = 0.001
+        w_pos_elbow    = 0.001
 
         w_vel_hip   = 0.0
         w_vel_knee  = 0.0
         w_vel_ankle = 0.0
-        w_vel_shoulder = 0.001
-        w_vel_elbow    = 0.001
+        w_vel_shoulder = 0.0001
+        w_vel_elbow    = 0.0001
 
         self.q_weights = jnp.array([
             w_pos_x, w_pos_z, w_theta,
@@ -81,6 +81,9 @@ class HumanoidSRB(Task):
 
         # input weights
         self.w_u = 1e-6
+
+        # centroidal angular momentum weight
+        self.w_L = 0.01
 
         # foot weights
         self.w_pos_foot_x = 0.0
@@ -105,6 +108,7 @@ class HumanoidSRB(Task):
         self.wf_pos_foot_x = terminal_scaling * self.w_pos_foot_x
         self.wf_pos_symmetry = terminal_scaling * self.w_pos_symmetry
         self.wf_vel_symmetry = terminal_scaling * self.w_vel_symmetry
+        self.wf_L = terminal_scaling * self.w_L
 
         print("Initialized Humanoid SRB tracking task.")
 
@@ -151,7 +155,6 @@ class HumanoidSRB(Task):
 
         t_SRB = np.loadtxt(time_path, delimiter=",")
         q_SRB = np.loadtxt(q_opt_path, delimiter=",")
-        q_SRB[:, 1] += 0.08  # Raise CoM z only
         v_SRB = np.loadtxt(v_opt_path, delimiter=",")
         a_SRB = np.loadtxt(a_opt_path, delimiter=",")
         c_SRB = np.loadtxt(c_opt_path, delimiter=",")
@@ -165,7 +168,7 @@ class HumanoidSRB(Task):
 
         # pre and post segments to hold initial and final poses
         T_pre = 0.5
-        T_post = 1.0
+        T_post = 0.5
 
         # Prepend initial state (hold initial pose)
         t_SRB_pre = np.arange(0.0, T_pre, dt_SRB)
@@ -227,7 +230,7 @@ class HumanoidSRB(Task):
         """Get the reference position (q) at time t."""
         i = jnp.int32(t * self.reference_fps)
         i = jnp.clip(i, 0, self.qpos_ref.shape[0] - 1)
-        return self.qpos_ref[i, :], self.qvel_ref[i, :]
+        return self.qpos_ref[i, :], self.qvel_ref[i, :] # (nq,), (nv,)
     
 
     def running_cost(self, state: mjx.Data, control: jax.Array) -> jax.Array:
@@ -235,8 +238,8 @@ class HumanoidSRB(Task):
         q_ref, v_ref = self._get_reference_configuration(state.time)
 
         # base tracking
-        q_actual = state.qpos
-        v_actual = state.qvel
+        q_actual = state.qpos  # (nq,)
+        v_actual = state.qvel  # (nv,)
         q_err = q_ref - q_actual
         v_err = v_ref - v_actual
 
@@ -254,7 +257,7 @@ class HumanoidSRB(Task):
         velocity_symmetry_cost = self.w_vel_symmetry * self._joint_symmetry_cost(v_actual)
 
         # Foot costs: orientation (flat) and x position (near 0)
-        left_pos, right_pos, left_quat, right_quat = self._get_foot_pose(state)
+        left_pos, right_pos, left_quat, right_quat = self._get_foot_pose(state) 
         foot_orientation_cost = self.w_pos_foot_theta * (
               jnp.square(self._foot_pitch(left_quat))
             + jnp.square(self._foot_pitch(right_quat))
@@ -264,6 +267,10 @@ class HumanoidSRB(Task):
             + jnp.square(right_pos[0] - q_ref[0])
         )
 
+        # angular momentum
+        L = self._centroidal_ang_mom(state)
+        ang_mom_cost = self.w_L * jnp.square(L[1])
+
         return (
               configuration_cost
             + velocity_cost
@@ -272,6 +279,7 @@ class HumanoidSRB(Task):
             + foot_x_cost
             + position_symmetry_cost
             + velocity_symmetry_cost
+            + ang_mom_cost
         )
 
 
@@ -280,8 +288,8 @@ class HumanoidSRB(Task):
         q_ref, v_ref = self._get_reference_configuration(state.time)
 
         # base tracking
-        q_actual = state.qpos
-        v_actual = state.qvel
+        q_actual = state.qpos  # (nq,)
+        v_actual = state.qvel  # (nv,)
         q_err = q_ref - q_actual
         v_err = v_ref - v_actual
 
@@ -307,6 +315,10 @@ class HumanoidSRB(Task):
             + jnp.square(right_pos[0] - q_ref[0])
         )
 
+        # angular momentum
+        L = self._centroidal_ang_mom(state)
+        ang_mom_cost = self.wf_L * jnp.square(L[1])
+
         return self.dt * (
               configuration_cost
             + velocity_cost
@@ -314,6 +326,7 @@ class HumanoidSRB(Task):
             + foot_x_cost
             + position_symmetry_cost
             + velocity_symmetry_cost
+            + ang_mom_cost
         )
 
     # def domain_randomize_model(self, rng: jax.Array) -> Dict[str, jax.Array]:
@@ -348,10 +361,10 @@ class HumanoidSRB(Task):
 
     def _get_foot_pose(self, data: mjx.Data):
         """Get the current foot positions and orientations."""
-        left_pos = data.sensordata[self.left_foot_pos_addr : self.left_foot_pos_addr + 3]
-        right_pos = data.sensordata[self.right_foot_pos_addr : self.right_foot_pos_addr + 3]
-        left_quat = data.sensordata[self.left_foot_quat_addr : self.left_foot_quat_addr + 4]
-        right_quat = data.sensordata[self.right_foot_quat_addr : self.right_foot_quat_addr + 4]
+        left_pos = data.sensordata[self.left_foot_pos_addr : self.left_foot_pos_addr + 3]        # (3,)
+        right_pos = data.sensordata[self.right_foot_pos_addr : self.right_foot_pos_addr + 3]     # (3,)
+        left_quat = data.sensordata[self.left_foot_quat_addr : self.left_foot_quat_addr + 4]     # (4,)
+        right_quat = data.sensordata[self.right_foot_quat_addr : self.right_foot_quat_addr + 4]  # (4,)
         return left_pos, right_pos, left_quat, right_quat
 
     def _foot_pitch(self, quat: jax.Array):
@@ -381,3 +394,11 @@ class HumanoidSRB(Task):
         left_vals = values[self.symmetry_joint_pairs[:, 0]]
         right_vals = values[self.symmetry_joint_pairs[:, 1]]
         return jnp.sum(jnp.square(left_vals - right_vals))
+    
+    def _centroidal_ang_mom(self, data: mjx.Data):
+        """
+        Compute the centroidal angular momentum about the COM in the world frame 
+        for a single environment.
+        """
+        L = data._impl.subtree_angmom[0]
+        return L  # (3,)
