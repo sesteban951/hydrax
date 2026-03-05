@@ -79,16 +79,32 @@ class HumanoidSRB(Task):
             w_vel_shoulder, w_vel_elbow,
         ])
 
-        # other weights
-        self.w_u = 1e-4
-        self.w_pos_foot_x = 1.0
-        self.w_pos_foot_theta = 1.0
+        # input weights
+        self.w_u = 1e-6
+
+        # foot weights
+        self.w_pos_foot_x = 0.0
+        self.w_pos_foot_theta = 0.1
+
+        # symmetry weights
+        self.w_pos_symmetry = 0.1
+        self.w_vel_symmetry = 0.01
+        self.symmetry_joint_pairs = jnp.array([
+            [3, 6],    # hip
+            [4, 7],    # knee
+            [5, 8],    # ankle
+            [9, 11],   # shoulder
+            [10, 12],  # elbow
+        ], dtype=jnp.int32)
 
         # terminal weights
         terminal_scaling = 10.0
         self.qf_weights = terminal_scaling * self.q_weights
         self.vf_weights = terminal_scaling * self.v_weights
         self.wf_pos_foot_theta = terminal_scaling * self.w_pos_foot_theta
+        self.wf_pos_foot_x = terminal_scaling * self.w_pos_foot_x
+        self.wf_pos_symmetry = terminal_scaling * self.w_pos_symmetry
+        self.wf_vel_symmetry = terminal_scaling * self.w_vel_symmetry
 
         print("Initialized Humanoid SRB tracking task.")
 
@@ -148,7 +164,7 @@ class HumanoidSRB(Task):
         c_SRB_last = float(np.asarray(c_SRB).reshape(-1)[-1])
 
         # pre and post segments to hold initial and final poses
-        T_pre = 1.0
+        T_pre = 0.5
         T_post = 1.0
 
         # Prepend initial state (hold initial pose)
@@ -218,58 +234,87 @@ class HumanoidSRB(Task):
         """The running cost ℓ(xₜ, uₜ)."""
         q_ref, v_ref = self._get_reference_configuration(state.time)
 
-        # Use actual CoM (x, z) instead of base frame for position/velocity
-        com_pos, com_vel = self._get_com_state(state)
-        q_actual = jnp.concatenate([com_pos, state.qpos[2:]])
-        v_actual = jnp.concatenate([com_vel, state.qvel[2:]])
-
-        # # base frame version (before CoM)
-        # q_err = q_ref - state.qpos
-        # v_err = v_ref - state.qvel
-
-        # com version 
+        # base tracking
+        q_actual = state.qpos
+        v_actual = state.qvel
         q_err = q_ref - q_actual
         v_err = v_ref - v_actual
+
+        # # COM tracking
+        # com_pos, com_vel = self._get_com_state(state)
+        # q_actual = jnp.concatenate([com_pos, state.qpos[2:]])
+        # v_actual = jnp.concatenate([com_vel, state.qvel[2:]])
+        # q_err = q_ref - q_actual
+        # v_err = v_ref - v_actual
 
         configuration_cost = jnp.sum(self.q_weights * jnp.square(q_err))
         velocity_cost = jnp.sum(self.v_weights * jnp.square(v_err))
         control_cost = self.w_u * jnp.sum(jnp.square(control - q_ref[3:]))
+        position_symmetry_cost = self.w_pos_symmetry * self._joint_symmetry_cost(q_actual)
+        velocity_symmetry_cost = self.w_vel_symmetry * self._joint_symmetry_cost(v_actual)
 
-        # Foot orientation cost: penalize pitch deviation from flat (theta = 0)
-        _, _, left_quat, right_quat = self._get_foot_pose(state)
+        # Foot costs: orientation (flat) and x position (near 0)
+        left_pos, right_pos, left_quat, right_quat = self._get_foot_pose(state)
         foot_orientation_cost = self.w_pos_foot_theta * (
-            jnp.square(self._foot_pitch(left_quat))
+              jnp.square(self._foot_pitch(left_quat))
             + jnp.square(self._foot_pitch(right_quat))
         )
+        foot_x_cost = self.w_pos_foot_x * (
+              jnp.square(left_pos[0] - q_ref[0])
+            + jnp.square(right_pos[0] - q_ref[0])
+        )
 
-        return configuration_cost + velocity_cost + control_cost + foot_orientation_cost
+        return (
+              configuration_cost
+            + velocity_cost
+            + control_cost
+            + foot_orientation_cost
+            + foot_x_cost
+            + position_symmetry_cost
+            + velocity_symmetry_cost
+        )
 
 
     def terminal_cost(self, state: mjx.Data) -> jax.Array:
         """The terminal cost ϕ(x_T)."""
         q_ref, v_ref = self._get_reference_configuration(state.time)
 
-        com_pos, com_vel = self._get_com_state(state)
-        q_actual = jnp.concatenate([com_pos, state.qpos[2:]])
-        v_actual = jnp.concatenate([com_vel, state.qvel[2:]])
-
-        # # base frame version (before CoM)
-        # q_err = q_ref - state.qpos
-        # v_err = v_ref - state.qvel
-
+        # base tracking
+        q_actual = state.qpos
+        v_actual = state.qvel
         q_err = q_ref - q_actual
         v_err = v_ref - v_actual
 
+        # # COM tracking
+        # com_pos, com_vel = self._get_com_state(state)
+        # q_actual = jnp.concatenate([com_pos, state.qpos[2:]])
+        # v_actual = jnp.concatenate([com_vel, state.qvel[2:]])
+        # q_err = q_ref - q_actual
+        # v_err = v_ref - v_actual
+
         configuration_cost = jnp.sum(self.qf_weights * jnp.square(q_err))
         velocity_cost = jnp.sum(self.vf_weights * jnp.square(v_err))
+        position_symmetry_cost = self.wf_pos_symmetry * self._joint_symmetry_cost(q_actual)
+        velocity_symmetry_cost = self.wf_vel_symmetry * self._joint_symmetry_cost(v_actual)
 
-        _, _, left_quat, right_quat = self._get_foot_pose(state)
+        left_pos, right_pos, left_quat, right_quat = self._get_foot_pose(state)
         foot_orientation_cost = self.wf_pos_foot_theta * (
-            jnp.square(self._foot_pitch(left_quat))
+              jnp.square(self._foot_pitch(left_quat))
             + jnp.square(self._foot_pitch(right_quat))
         )
+        foot_x_cost = self.wf_pos_foot_x * (
+              jnp.square(left_pos[0] - q_ref[0])
+            + jnp.square(right_pos[0] - q_ref[0])
+        )
 
-        return self.dt * (configuration_cost + velocity_cost + foot_orientation_cost)
+        return self.dt * (
+              configuration_cost
+            + velocity_cost
+            + foot_orientation_cost
+            + foot_x_cost
+            + position_symmetry_cost
+            + velocity_symmetry_cost
+        )
 
     # def domain_randomize_model(self, rng: jax.Array) -> Dict[str, jax.Array]:
     #     """Randomize the friction parameters."""
@@ -330,3 +375,9 @@ class HumanoidSRB(Task):
         com_pos = _com_pos[jnp.array([0, 2])]  # (x, z)
         com_vel = _com_vel[jnp.array([0, 2])]  # (vx, vz)
         return com_pos, com_vel
+    
+    def _joint_symmetry_cost(self, values: jax.Array) -> jax.Array:
+        """Sum squared left-right differences over mirrored joints."""
+        left_vals = values[self.symmetry_joint_pairs[:, 0]]
+        right_vals = values[self.symmetry_joint_pairs[:, 1]]
+        return jnp.sum(jnp.square(left_vals - right_vals))

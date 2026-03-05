@@ -48,8 +48,8 @@ ctrl = CEM(
     sigma_start=0.2,
     sigma_min=0.05,
     explore_fraction=0.5,
-    plan_horizon=0.5,
-    spline_type="zero",
+    plan_horizon=0.4,
+    spline_type="cubic",
     num_knots=5,
     iterations=args.iterations,
 )
