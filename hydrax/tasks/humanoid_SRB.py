@@ -227,7 +227,7 @@ class HumanoidSRB(Task):
         configuration_cost = jnp.sum(self.qf_weights * jnp.square(q_err))
         velocity_cost = jnp.sum(self.vf_weights * jnp.square(v_err))
 
-        return self.dt(
+        return self.dt * (
             configuration_cost +
             velocity_cost
         )
