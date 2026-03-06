@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import mujoco
 
-from hydrax.algs import CEM, MPPI, Evosax
+from hydrax.algs import CEM, MPPI, Evosax, DIAL
 from evosax.algorithms.distribution_based.cma_es import CMA_ES
 from hydrax.simulation.deterministic import run_interactive
 from hydrax.tasks.humanoid_SRB import HumanoidSRB
@@ -27,12 +27,6 @@ parser.add_argument(
     action="store_true",
     help="Show the reference trajectory as a 'ghost' in the simulation.",
 )
-parser.add_argument(
-    "--iterations",
-    type=int,
-    default=1,
-    help="Number of CEM iterations.",
-)
 
 args = parser.parse_args()
 
@@ -44,15 +38,15 @@ task = HumanoidSRB(
 # Set up the controller
 ctrl = CEM(
     task,
-    num_samples=512,
+    num_samples=2048,
     num_elites=30,
-    sigma_start=0.1,
+    sigma_start=0.5,
     sigma_min=0.05,
     explore_fraction=0.5,
     plan_horizon=0.4,
-    spline_type="cubic",
-    num_knots=5,
-    iterations=args.iterations,
+    spline_type="zero",
+    num_knots=4,
+    iterations=10,
 )
 # ctrl = MPPI(
 #     task,
@@ -60,21 +54,32 @@ ctrl = CEM(
 #     noise_level=0.3,
 #     temperature=0.1,
 #     # num_randomizations=4,
-#     plan_horizon=0.4,
-#     spline_type="cubic",
-#     num_knots=5,
-#     iterations=args.iterations,
+#     plan_horizon=0.8,
+#     spline_type="zero",
+#     num_knots=4,
+#     iterations=10,
 # )
-
 # ctrl = Evosax(
 #     task,
 #     CMA_ES,
 #     num_samples=512,
-#     # num_randomizations=8,
+#     num_randomizations=8,
 #     plan_horizon=0.4,
-#     spline_type="cubic",
-#     num_knots=5,
-#     iterations=args.iterations,
+#     spline_type="zero",
+#     num_knots=4,
+#     iterations=10,
+# )
+# ctrl = DIAL(
+#     task,
+#     num_samples=512,
+#     noise_level=0.2,
+#     beta_opt_iter=0.5,
+#     beta_horizon=0.5,
+#     temperature=0.001,
+#     plan_horizon=0.5,
+#     spline_type="zero",
+#     num_knots=4,
+#     iterations=10,
 # )
 
 # Define the model used for simulation
@@ -107,7 +112,7 @@ sim_data = run_interactive(
     reference=reference,
     reference_fps=task.reference_fps,
     initial_knots=initial_knots,
-    max_time=5.0,
+    max_time=3.5,
 )
 
 # Save recorded data as CSV files

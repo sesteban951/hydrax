@@ -83,10 +83,10 @@ class HumanoidSRB(Task):
         self.w_u = 1e-6
 
         # centroidal angular momentum weight
-        self.w_L = 0.01
+        self.w_L = 0.0
 
         # foot weights
-        self.w_pos_foot_x = 0.0
+        self.w_pos_foot_x = 0.01
         self.w_pos_foot_theta = 0.1
 
         # symmetry weights
@@ -205,7 +205,7 @@ class HumanoidSRB(Task):
 
         # Build full reference trajectory
         n_nodes = q_SRB.shape[0]
-        theta_col = (-theta_ref)[:, None]
+        theta_col = (-theta_ref)[:, None] # negative because planar y has negative axis
         omega_col = (-omega_ref)[:, None]
         qpos_joint_ref = np.asarray(self.qpos_joints_ref)[None, :].repeat(n_nodes, axis=0)
         qvel_joint_ref = np.asarray(self.qvel_joints_ref)[None, :].repeat(n_nodes, axis=0)
@@ -244,7 +244,7 @@ class HumanoidSRB(Task):
         v_err = v_ref - v_actual
 
         # # COM tracking
-        # com_pos, com_vel = self._get_com_state(state)
+        com_pos, com_vel = self._get_com_state(state)
         # q_actual = jnp.concatenate([com_pos, state.qpos[2:]])
         # v_actual = jnp.concatenate([com_vel, state.qvel[2:]])
         # q_err = q_ref - q_actual
@@ -263,8 +263,8 @@ class HumanoidSRB(Task):
             + jnp.square(self._foot_pitch(right_quat))
         )
         foot_x_cost = self.w_pos_foot_x * (
-              jnp.square(left_pos[0] - q_ref[0])
-            + jnp.square(right_pos[0] - q_ref[0])
+              jnp.square(left_pos[0] - com_pos[0])
+            + jnp.square(right_pos[0] - com_pos[0])
         )
 
         # angular momentum
@@ -294,7 +294,7 @@ class HumanoidSRB(Task):
         v_err = v_ref - v_actual
 
         # # COM tracking
-        # com_pos, com_vel = self._get_com_state(state)
+        com_pos, com_vel = self._get_com_state(state)
         # q_actual = jnp.concatenate([com_pos, state.qpos[2:]])
         # v_actual = jnp.concatenate([com_vel, state.qvel[2:]])
         # q_err = q_ref - q_actual
@@ -311,8 +311,8 @@ class HumanoidSRB(Task):
             + jnp.square(self._foot_pitch(right_quat))
         )
         foot_x_cost = self.wf_pos_foot_x * (
-              jnp.square(left_pos[0] - q_ref[0])
-            + jnp.square(right_pos[0] - q_ref[0])
+              jnp.square(left_pos[0] - com_pos[0])
+            + jnp.square(right_pos[0] - com_pos[0])
         )
 
         # angular momentum
