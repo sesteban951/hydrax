@@ -17,6 +17,12 @@ parser = argparse.ArgumentParser(
     description="Run an interactive simulation of mocap tracking with the G1."
 )
 parser.add_argument(
+    "--reference",
+    type=str,
+    default="srb_jump_up",
+    help="Name of the experiment to visualize.",
+)
+parser.add_argument(
     "--warp",
     action="store_true",
     help="Whether to use the (experimental) MjWarp backend. (default: False)",
@@ -30,9 +36,12 @@ parser.add_argument(
 
 args = parser.parse_args()
 
+experiment_name = args.reference
+
 # Define the task (cost and dynamics)
 task = HumanoidSRB(
     impl="warp" if args.warp else "jax",
+    experiment_name=experiment_name,
 )
 
 # Set up the controller
@@ -119,7 +128,7 @@ sim_data = run_interactive(
 import numpy as np
 from pathlib import Path
 
-output_dir = Path(__file__).resolve().parent.parent / "results" / "g1"
+output_dir = Path(__file__).resolve().parent.parent / "results" / "g1" / experiment_name
 output_dir.mkdir(parents=True, exist_ok=True)
 
 np.savetxt(output_dir / "time.csv", sim_data["time"], delimiter=",")

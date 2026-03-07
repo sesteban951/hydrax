@@ -18,12 +18,15 @@ class HumanoidSRB(Task):
     def __init__(
         self,
         impl: str = "jax",
+        experiment_name: str = "srb_jump_up",
     ) -> None:
         """Load the MuJoCo model and set task parameters.
 
         The list of available reference files can be found at
         https://huggingface.co/datasets/robfiras/loco-mujoco-datasets/tree/main.
         """
+
+        self.experiment_name = experiment_name
 
         # mujoco model
         mj_model = mujoco.MjModel.from_xml_path(
@@ -155,8 +158,7 @@ class HumanoidSRB(Task):
     def _make_reference_trajectory(self):
 
         # Load trajectory CSV files from a stable package-relative location.
-        experiment = "srb_jump_up"
-        traj_path = Path(ROOT) / "trajectories" / experiment
+        traj_path = Path(ROOT) / "trajectories" / self.experiment_name
         time_path = traj_path / "time.csv"
         q_opt_path = traj_path / "q_opt.csv"
         v_opt_path = traj_path / "v_opt.csv"

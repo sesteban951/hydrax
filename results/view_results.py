@@ -4,6 +4,8 @@
 #
 ##
 
+import argparse
+
 # standard imports
 import numpy as np
 import time
@@ -12,6 +14,20 @@ import time
 import mujoco
 import mujoco.viewer
 
+from pathlib import Path
+
+# Parse command-line arguments
+parser = argparse.ArgumentParser(
+    description="View the results of a mocap tracking simulation with the G1."
+)
+parser.add_argument(
+    "--reference",
+    type=str,
+    default="srb_jump_up",
+    help="Name of the experiment to visualize.",
+)
+
+args = parser.parse_args()
 
 #################################################################################
 # SETTINGS
@@ -20,8 +36,6 @@ import mujoco.viewer
 # playback the optimal trajectory in the mujoco viewer
 visualize = 1
 
-# which data to load
-experiment = "g1"
 xml_path = "./hydrax/models/g1/g1_planar.xml"
 
 
@@ -29,9 +43,7 @@ xml_path = "./hydrax/models/g1/g1_planar.xml"
 # LOAD DATA
 #################################################################################
 
-from pathlib import Path
-
-results_dir = Path(__file__).resolve().parent / experiment
+results_dir = Path(__file__).resolve().parent / "g1" / args.reference
 
 # load data from csv files
 times = np.loadtxt(results_dir / "time.csv", delimiter=",")
