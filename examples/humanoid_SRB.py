@@ -50,11 +50,11 @@ ctrl = CEM(
 )
 # ctrl = MPPI(
 #     task,
-#     num_samples=512,
-#     noise_level=0.3,
+#     num_samples=2048,
+#     noise_level=0.1,
 #     temperature=0.1,
 #     # num_randomizations=4,
-#     plan_horizon=0.8,
+#     plan_horizon=0.4,
 #     spline_type="zero",
 #     num_knots=4,
 #     iterations=10,
@@ -112,7 +112,7 @@ sim_data = run_interactive(
     reference=reference,
     reference_fps=task.reference_fps,
     initial_knots=initial_knots,
-    max_time=3.5,
+    max_time=3.0,
 )
 
 # Save recorded data as CSV files

@@ -89,6 +89,9 @@ class HumanoidSRB(Task):
         self.w_pos_foot_x = 0.01
         self.w_pos_foot_theta = 0.1
 
+        self.w_contact = 0.0
+        self.contact_force_threshold = 10.0
+
         # symmetry weights
         self.w_pos_symmetry = 0.1
         self.w_vel_symmetry = 0.01
@@ -109,6 +112,7 @@ class HumanoidSRB(Task):
         self.wf_pos_symmetry = terminal_scaling * self.w_pos_symmetry
         self.wf_vel_symmetry = terminal_scaling * self.w_vel_symmetry
         self.wf_L = terminal_scaling * self.w_L
+        self.wf_contact = terminal_scaling * self.w_contact
 
         print("Initialized Humanoid SRB tracking task.")
 
@@ -131,10 +135,15 @@ class HumanoidSRB(Task):
         left_foot_quat_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, "left_foot_orientation")
         right_foot_pos_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, "right_foot_position")
         right_foot_quat_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, "right_foot_orientation")
+        left_foot_touch_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, "left_foot_touch")
+        right_foot_touch_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, "right_foot_touch")
+         
         self.left_foot_pos_addr = self.mj_model.sensor_adr[left_foot_pos_id]
         self.left_foot_quat_addr = self.mj_model.sensor_adr[left_foot_quat_id]
+        self.left_foot_touch_addr = self.mj_model.sensor_adr[left_foot_touch_id]
         self.right_foot_pos_addr = self.mj_model.sensor_adr[right_foot_pos_id]
         self.right_foot_quat_addr = self.mj_model.sensor_adr[right_foot_quat_id]
+        self.right_foot_touch_addr = self.mj_model.sensor_adr[right_foot_touch_id]
 
         print(f"Model properties:\n"
               f"    Time step (dt): {self.dt}\n"
@@ -146,7 +155,8 @@ class HumanoidSRB(Task):
     def _make_reference_trajectory(self):
 
         # Load trajectory CSV files from a stable package-relative location.
-        traj_path = Path(ROOT) / "trajectories" / "srb_jump_2d"
+        experiment = "srb_jump_up"
+        traj_path = Path(ROOT) / "trajectories" / experiment
         time_path = traj_path / "time.csv"
         q_opt_path = traj_path / "q_opt.csv"
         v_opt_path = traj_path / "v_opt.csv"
@@ -196,7 +206,10 @@ class HumanoidSRB(Task):
         a_SRB = np.concatenate([a_SRB_pre, a_SRB, a_SRB_post], axis=0)
         c_SRB = np.concatenate([c_SRB_pre, c_SRB, c_SRB_post], axis=0)
 
+        pz_offset = -0.0 # add small offset to z
+
         p_com_ref = q_SRB[:, :2]  # CoM x and z positions
+        p_com_ref[:, 1] += pz_offset  
         v_com_ref = v_SRB[:, :2]  # CoM x and z velocities
         a_com_ref = a_SRB[:, :2]  # CoM x and z accelerations
         theta_ref = q_SRB[:, 2]   # torso pitch angle
@@ -211,6 +224,7 @@ class HumanoidSRB(Task):
         qvel_joint_ref = np.asarray(self.qvel_joints_ref)[None, :].repeat(n_nodes, axis=0)
         self.qpos_ref = jnp.array(np.hstack([p_com_ref, theta_col, qpos_joint_ref]))
         self.qvel_ref = jnp.array(np.hstack([v_com_ref, omega_col, qvel_joint_ref]))
+        self.contact_ref = jnp.array(c_SRB)
 
         # reference HZ
         self.reference_fps = 1.0 / dt_SRB
@@ -230,12 +244,12 @@ class HumanoidSRB(Task):
         """Get the reference position (q) at time t."""
         i = jnp.int32(t * self.reference_fps)
         i = jnp.clip(i, 0, self.qpos_ref.shape[0] - 1)
-        return self.qpos_ref[i, :], self.qvel_ref[i, :] # (nq,), (nv,)
+        return self.qpos_ref[i, :], self.qvel_ref[i, :], self.contact_ref[i] # (nq,), (nv,), scalar
     
 
     def running_cost(self, state: mjx.Data, control: jax.Array) -> jax.Array:
         """The running cost ℓ(xₜ, uₜ)."""
-        q_ref, v_ref = self._get_reference_configuration(state.time)
+        q_ref, v_ref, c_ref = self._get_reference_configuration(state.time)
 
         # base tracking
         q_actual = state.qpos  # (nq,)
@@ -257,7 +271,7 @@ class HumanoidSRB(Task):
         velocity_symmetry_cost = self.w_vel_symmetry * self._joint_symmetry_cost(v_actual)
 
         # Foot costs: orientation (flat) and x position (near 0)
-        left_pos, right_pos, left_quat, right_quat = self._get_foot_pose(state) 
+        left_pos, right_pos, left_quat, right_quat = self._get_foot_pose(state)
         foot_orientation_cost = self.w_pos_foot_theta * (
               jnp.square(self._foot_pitch(left_quat))
             + jnp.square(self._foot_pitch(right_quat))
@@ -266,6 +280,15 @@ class HumanoidSRB(Task):
               jnp.square(left_pos[0] - com_pos[0])
             + jnp.square(right_pos[0] - com_pos[0])
         )
+
+        # # contact schedule cost
+        # left_force, right_force = self._get_foot_contact_forces(state)
+        # total_force = left_force + right_force
+        # contact_cost = self.w_contact * jnp.where(
+        #     c_ref > 0.5,
+        #     jnp.square(jnp.maximum(self.contact_force_threshold - total_force, 0.0)),  # should be grounded
+        #     jnp.square(total_force),                                                   # should be airborne
+        # )
 
         # angular momentum
         L = self._centroidal_ang_mom(state)
@@ -280,12 +303,13 @@ class HumanoidSRB(Task):
             + position_symmetry_cost
             + velocity_symmetry_cost
             + ang_mom_cost
+            # + contact_cost
         )
 
 
     def terminal_cost(self, state: mjx.Data) -> jax.Array:
         """The terminal cost ϕ(x_T)."""
-        q_ref, v_ref = self._get_reference_configuration(state.time)
+        q_ref, v_ref, c_ref = self._get_reference_configuration(state.time)
 
         # base tracking
         q_actual = state.qpos  # (nq,)
@@ -315,6 +339,15 @@ class HumanoidSRB(Task):
             + jnp.square(right_pos[0] - com_pos[0])
         )
 
+        # # contact schedule cost
+        # left_force, right_force = self._get_foot_contact_forces(state)
+        # total_force = left_force + right_force
+        # contact_cost = self.wf_contact * jnp.where(
+        #     c_ref > 0.5,
+        #     jnp.square(jnp.maximum(self.contact_force_threshold - total_force, 0.0)),  # should be grounded
+        #     jnp.square(total_force),                                                   # should be airborne
+        # )
+
         # angular momentum
         L = self._centroidal_ang_mom(state)
         ang_mom_cost = self.wf_L * jnp.square(L[1])
@@ -327,29 +360,8 @@ class HumanoidSRB(Task):
             + position_symmetry_cost
             + velocity_symmetry_cost
             + ang_mom_cost
+            # + contact_cost
         )
-
-    # def domain_randomize_model(self, rng: jax.Array) -> Dict[str, jax.Array]:
-    #     """Randomize the friction parameters."""
-    #     n_geoms = self.model.geom_friction.shape[0]
-    #     multiplier = jax.random.uniform(rng, (n_geoms,), minval=0.5, maxval=2.0)
-    #     new_frictions = self.model.geom_friction.at[:, 0].set(
-    #         self.model.geom_friction[:, 0] * multiplier
-    #     )
-    #     return {"geom_friction": new_frictions}
-
-    # def domain_randomize_data(
-    #     self, data: mjx.Data, rng: jax.Array
-    # ) -> Dict[str, jax.Array]:
-    #     """Randomly perturb the measured base position and velocities."""
-    #     rng, q_rng, v_rng = jax.random.split(rng, 3)
-    #     q_err = 0.01 * jax.random.normal(q_rng, (3,))
-    #     v_err = 0.01 * jax.random.normal(v_rng, (3,))
-
-    #     qpos = data.qpos.at[0:3].set(data.qpos[0:3] + q_err)
-    #     qvel = data.qvel.at[0:3].set(data.qvel[0:3] + v_err)
-
-    #     return {"qpos": qpos, "qvel": qvel}
 
     def make_data(self) -> mjx.Data:
         """Create a new state object with extra constraints allocated."""
@@ -358,6 +370,12 @@ class HumanoidSRB(Task):
     # ===============================================================
     # UTILS
     # ===============================================================
+
+    def _get_foot_contact_forces(self, data: mjx.Data):
+        """Extract the current foot contact force magnitudes."""
+        left_force = data.sensordata[self.left_foot_touch_addr]
+        right_force = data.sensordata[self.right_foot_touch_addr]
+        return left_force, right_force
 
     def _get_foot_pose(self, data: mjx.Data):
         """Get the current foot positions and orientations."""
@@ -402,3 +420,4 @@ class HumanoidSRB(Task):
         """
         L = data._impl.subtree_angmom[0]
         return L  # (3,)
+
