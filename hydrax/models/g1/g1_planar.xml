@@ -1,6 +1,8 @@
 <mujoco model="g1_planar">
   <compiler angle="radian" meshdir="assets" autolimits="true" />
 
+  <size nconmax="200" njmax="50000"/>
+
   <option timestep="0.01" iterations="10" ls_iterations="10">
     <flag eulerdamp="disable" />
   </option>
@@ -287,6 +289,25 @@
     </body>
   </worldbody>
 
+  <!-- MIRRORED ACTUATION -->
+  <!-- <equality>
+    <joint joint1="left_hip_pitch_joint"   joint2="right_hip_pitch_joint"   polycoef="0 1 0 0 0" />
+    <joint joint1="left_knee_joint"        joint2="right_knee_joint"        polycoef="0 1 0 0 0" />
+    <joint joint1="left_ankle_pitch_joint" joint2="right_ankle_pitch_joint" polycoef="0 1 0 0 0" />
+    <joint joint1="left_shoulder_pitch_joint" joint2="right_shoulder_pitch_joint" polycoef="0 1 0 0 0" />
+    <joint joint1="left_elbow_joint"       joint2="right_elbow_joint"       polycoef="0 1 0 0 0" />
+  </equality>
+
+  <actuator>
+    <position class="g1" name="left_hip_pitch_joint" joint="left_hip_pitch_joint" />
+    <position class="g1" name="left_knee_joint" joint="left_knee_joint" />
+    <position class="g1" name="left_ankle_pitch_joint" joint="left_ankle_pitch_joint" />
+
+    <position class="g1" name="left_shoulder_pitch_joint" joint="left_shoulder_pitch_joint" />
+    <position class="g1" name="left_elbow_joint" joint="left_elbow_joint" />
+  </actuator> -->
+
+  <!-- REGULAR ACTUATION -->
   <actuator>
     <position class="g1" name="left_hip_pitch_joint" joint="left_hip_pitch_joint" />
     <position class="g1" name="left_knee_joint" joint="left_knee_joint" />
