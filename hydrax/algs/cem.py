@@ -134,6 +134,7 @@ class CEM(SamplingBasedController):
         costs = jnp.sum(rollouts.costs, axis=1)  # sum over time steps
 
         # Sort the costs and get the indices of the elites.
+        # TODO: consider using jax.lax.top_k instead of sorting the whole array
         indices = jnp.argsort(costs)
         elites = indices[: self.num_elites]
 
