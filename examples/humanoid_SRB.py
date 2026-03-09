@@ -106,6 +106,7 @@ key_id = mj_model.key(keyframe).id
 qpos_default = mj_model.key_qpos[key_id]
 mj_data.qpos[:] = qpos_default  
 initial_knots = task.qpos_ref[: ctrl.num_knots, 3:]
+# initial_knots = task.qpos_ref[: ctrl.num_knots, [3, 4, 5, 9, 10]] # mirrored
 
 if args.show_reference:
     reference = task.qpos_ref

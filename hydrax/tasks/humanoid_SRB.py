@@ -268,9 +268,12 @@ class HumanoidSRB(Task):
 
         configuration_cost = jnp.sum(self.q_weights * jnp.square(q_err))
         velocity_cost = jnp.sum(self.v_weights * jnp.square(v_err))
-        control_cost = self.w_u * jnp.sum(jnp.square(control - q_ref[3:]))
         position_symmetry_cost = self.w_pos_symmetry * self._joint_symmetry_cost(q_actual)
         velocity_symmetry_cost = self.w_vel_symmetry * self._joint_symmetry_cost(v_actual)
+        
+        control_cost = self.w_u * jnp.sum(jnp.square(control - q_ref[3:]))
+        # joint_idx = jnp.array([3, 4, 5, 9, 10])  # hip, knee, ankle, shoulder, elbow (both sides)
+        # control_cost = self.w_u * jnp.sum(jnp.square(control - q_ref[joint_idx]))
 
         # Foot costs: orientation (flat) and x position (near 0)
         left_pos, right_pos, left_quat, right_quat = self._get_foot_pose(state)
@@ -367,7 +370,7 @@ class HumanoidSRB(Task):
 
     def make_data(self) -> mjx.Data:
         """Create a new state object with extra constraints allocated."""
-        return super().make_data(naconmax=20000, njmax=200)
+        return super().make_data(naconmax=50000, njmax=200)
 
     # ===============================================================
     # UTILS
