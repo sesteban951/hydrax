@@ -231,4 +231,4 @@ class HumanoidMocap(Task):
 
     def make_data(self) -> mjx.Data:
         """Create a new state object with extra constraints allocated."""
-        return super().make_data(naconmax=20000, njmax=200)
+        return super().make_data(naconmax=50000, njmax=200)
